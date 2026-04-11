@@ -168,7 +168,7 @@ assign AUDIO_R   = AUDIO_L;
 assign AUDIO_MIX = 0;
 
 assign LED_USER  = downloading | (loader_fail & led_blink) | (bk_state != S_IDLE) | (bk_pending & ~status[50]);
-assign LED_DISK  = 0;
+assign LED_DISK  = {1'b1, ra_busy};  // b[1]=1: direct control, b[0]: RA mirror active
 assign LED_POWER = 0;
 assign BUTTONS [1] = 0;
 assign VGA_SCALER  = 0;
@@ -1032,14 +1032,33 @@ always @(posedge clk) begin
 	end
 end
 
+// --- RetroAchievements RAM mirror signals ---
+wire [24:0] ra_sdram_addr;
+wire        ra_sdram_rd;
+wire  [7:0] ra_sdram_dout;
+wire        ra_sdram_busy;
+wire [27:1] ra_ddram_addr;
+wire [63:0] ra_ddram_din;
+wire        ra_ddram_req;
+wire  [7:0] ra_ddram_be;
+wire        ra_ddram_rnw;
+wire        ra_ddram_ready;
+wire        ra_busy;
+
+// RA mirror can use SDRAM ch2 only when savestate and backup RAM are idle
+wire ra_sdram_active = ra_busy & ~sleep_savestate & ~bk_busy;
+
 wire [24:0] ch2_addr = sleep_savestate ? Savestate_SDRAMAddr :
-                       mapper_has_flashsaves ? {6'b000000, save_addr} : // PRG-ROM
-                       {7'b0001111, save_addr[17:0]};                   // CARTRAM
-wire        ch2_wr   = sleep_savestate ? Savestate_SDRAMWrEn      : save_wr;
+                       bk_busy ? (mapper_has_flashsaves ? {6'b000000, save_addr} : {7'b0001111, save_addr[17:0]}) :
+                       ra_sdram_active ? ra_sdram_addr :
+                       (mapper_has_flashsaves ? {6'b000000, save_addr} : {7'b0001111, save_addr[17:0]});
+wire        ch2_wr   = sleep_savestate ? Savestate_SDRAMWrEn      : (ra_sdram_active ? 1'b0 : save_wr);
 wire  [7:0] ch2_din  = sleep_savestate ? Savestate_SDRAMWriteData : sd_buff_dout;
-wire        ch2_rd   = sleep_savestate ? Savestate_SDRAMRdEn      : save_rd;
+wire        ch2_rd   = sleep_savestate ? Savestate_SDRAMRdEn      : (ra_sdram_active ? ra_sdram_rd : save_rd);
 
 assign Savestate_SDRAMReadData = save_dout;
+assign ra_sdram_dout = save_dout;
+assign ra_sdram_busy = save_busy;
 
 sdram sdram
 (
@@ -1372,7 +1391,43 @@ ddram ddram
 	.ch1_req(ss_req),
 	.ch1_rnw(ss_rnw),
 	.ch1_be(ss_be),
-	.ch1_ready(ss_ack)
+	.ch1_ready(ss_ack),
+
+	.ch2_addr(ra_ddram_addr),
+	.ch2_din(ra_ddram_din),
+	.ch2_req(ra_ddram_req),
+	.ch2_rnw(ra_ddram_rnw),
+	.ch2_be(ra_ddram_be),
+	.ch2_ready(ra_ddram_ready)
+);
+
+// --- RetroAchievements RAM mirror ---
+// ARM physical address: 0x3D000000 (below savestate area at 0x3E000000)
+// FPGA DWORD addr = (0x3D000000 - 0x30000000) / 4 = 0x3400000
+// ddram_base_addr [27:1] = DWORD_addr * 2 = 0x6800000
+ra_ram_mirror #(
+	.REGION_COUNT       (2),
+	.REGION0_SDRAM_ADDR (25'h380000),  // NES CPU-RAM (2 KB)
+	.REGION0_SIZE       (16'd2048),
+	.REGION1_SDRAM_ADDR (25'h3C0000),  // NES CARTRAM (8 KB typical)
+	.REGION1_SIZE       (16'd8192)
+) ra_mirror (
+	.clk             (clk),
+	.reset           (reset_nes),
+	.vblank          (nes_vblank & ~bk_busy & ~sleep_savestate),  // Only start when SDRAM ch2 is available
+	.sdram_addr      (ra_sdram_addr),
+	.sdram_rd        (ra_sdram_rd),
+	.sdram_dout      (ra_sdram_dout),
+	.sdram_busy      (ra_sdram_busy),
+	.ddram_addr      (ra_ddram_addr),
+	.ddram_din       (ra_ddram_din),
+	.ddram_req       (ra_ddram_req),
+	.ddram_be        (ra_ddram_be),
+	.ddram_rnw       (ra_ddram_rnw),
+	.ddram_ready     (ra_ddram_ready),
+	.ddram_base_addr (27'h6800000),    // ARM phys 0x3D000000
+	.busy            (ra_busy),
+	.dbg_frame_counter() // Debug: unconnected for now, visible in SignalTap
 );
 
 // saving with keyboard/OSD/gamepad

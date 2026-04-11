@@ -32,18 +32,26 @@ module ddram
 	output  [7:0] DDRAM_BE,
 	output        DDRAM_WE,
 	
-	// save state
+	// ch1: save state
 	input  [27:1] ch1_addr,
 	output [63:0] ch1_dout,
 	input  [63:0] ch1_din,
 	input         ch1_req,
 	input         ch1_rnw,
 	input  [7:0]  ch1_be,
-	output        ch1_ready
+	output        ch1_ready,
+
+	// ch2: RetroAchievements RAM mirror (write-only to DDRAM)
+	input  [27:1] ch2_addr,
+	input  [63:0] ch2_din,
+	input         ch2_req,
+	input         ch2_rnw,
+	input  [7:0]  ch2_be,
+	output        ch2_ready
 );
 
 reg  [7:0] ram_burst;
-reg [63:0] ram_q[1:1];
+reg [63:0] ram_q[2:1];
 reg [63:0] ram_data;
 reg [27:1] ram_address;
 reg        ram_read = 0;
@@ -61,15 +69,15 @@ assign DDRAM_WE       = ram_write;
 
 assign ch1_dout  = ram_q[1];
 assign ch1_ready = ready[1];
+assign ch2_ready = ready[2];
 
 reg        state  = 0;
-reg  [0:0] ch = 0; 
-reg  [1:1] ch_rq;
+reg  [1:0] ch = 0; 
+reg  [2:1] ch_rq;
 
 always @(posedge DDRAM_CLK) begin
 
-
-	ch_rq <= ch_rq | {ch1_req};
+	ch_rq <= ch_rq | {ch2_req, ch1_req};
 	ready <= 0;
 
 	if(!DDRAM_BUSY) begin
@@ -92,7 +100,23 @@ always @(posedge DDRAM_CLK) begin
 						ram_read      <= 1;
 						state         <= 1;
 					end
-            end
+				end
+				else if(ch_rq[2] || ch2_req) begin
+					ch_rq[2]         <= 0;
+					ch               <= 2;
+					ram_data         <= ch2_din;
+					ram_be           <= ch2_be;
+					ram_address      <= ch2_addr;
+					ram_burst        <= 1;
+					if(~ch2_rnw) begin
+						ram_write     <= 1;
+						ready[2]      <= 1;
+					end
+					else begin
+						ram_read      <= 1;
+						state         <= 1;
+					end
+				end
 
 			1: if(DDRAM_DOUT_READY) begin
 					ram_q[ch]        <= DDRAM_DOUT;

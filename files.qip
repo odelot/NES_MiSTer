@@ -4,6 +4,7 @@ set_global_assignment -name QIP_FILE rtl/SOUND/OPLL/OPLL.qip
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram.sv
 set_global_assignment -name VHDL_FILE rtl/dpram.vhd
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddram.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ra_ram_mirror.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/EEPROM_24C0x.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cheatcodes.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/miracle.sv
