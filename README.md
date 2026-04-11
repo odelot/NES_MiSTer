@@ -1,4 +1,92 @@
-# [Nintendo Entertainment System](https://en.wikipedia.org/wiki/Nintendo_Entertainment_System) for [MiSTer Platform](https://github.com/MiSTer-devel/Main_MiSTer/wiki)
+# NES_MiSTer — RetroAchievements Fork
+
+This is a fork of the official [NES core for MiSTer](https://github.com/MiSTer-devel/NES_MiSTer) with modifications to support **RetroAchievements** on MiSTer FPGA.
+
+> **Status:** Experimental / Proof of Concept — works together with the [modified Main_MiSTer binary](https://github.com/odelot/Main_MiSTer).
+
+## What's Different from the Original
+
+The upstream NES core is a pure FPGA NES/Famicom implementation. This fork adds a single new module and minor wiring changes so the ARM side (Main_MiSTer) can read emulated NES RAM for achievement evaluation. **No emulation logic was changed** — the core plays games identically to the original.
+
+### Added File
+
+| File | Purpose |
+|------|---------|
+| `rtl/ra_ram_mirror.sv` | Copies emulated NES RAM from SDRAM to DDRAM every VBlank so the ARM CPU can read it |
+
+### Modified Files
+
+| File | Change |
+|------|--------|
+| `NES.sv` | Instantiates `ra_ram_mirror` and wires it to SDRAM channel 2 and a new DDRAM channel |
+| `files.qip` | Adds `rtl/ra_ram_mirror.sv` to the Quartus project |
+
+### How the RAM Mirror Works
+
+The `ra_ram_mirror` module runs a state machine triggered on each VBlank (~60 Hz). It:
+
+1. Reads NES RAM from SDRAM (sharing channel 2 with savestates, coordinated via busy flags)
+2. Writes a structured block to DDRAM at physical address `0x3D000000`
+3. Includes a header with a magic number (`"RACH"`), frame counter, and region descriptors
+
+**Memory regions exposed:**
+
+| Region | NES Address | Size | Description |
+|--------|-------------|------|-------------|
+| 0 | $0000–$07FF | 2 KB | CPU-RAM (internal NES work RAM) |
+| 1 | $6000–$7FFF | 8 KB | Cart SRAM (battery-backed save RAM) |
+
+The DDRAM arbiter (`ddram` module) was extended with a second channel (ch2) dedicated to this mirror, so it doesn't interfere with savestate operations on ch1.
+
+### Architecture Diagram
+
+```
+┌───────────────────────────────────┐
+│         NES FPGA Core             │
+│                                   │
+│  CPU-RAM (2KB)   CartRAM (8KB)    │
+│      in SDRAM        in SDRAM     │
+└─────────┬─────────────┬──────────┘
+          │  VBlank     │
+          ▼             ▼
+┌───────────────────────────────────┐
+│     ra_ram_mirror.sv              │
+│  Reads SDRAM ch2 → Writes DDRAM  │
+│  Header + frame counter + data   │
+└─────────────┬─────────────────────┘
+              │  DDRAM @ 0x3D000000
+              ▼
+┌───────────────────────────────────┐
+│     Main_MiSTer (ARM binary)      │
+│  mmap /dev/mem → reads mirror     │
+│  rcheevos evaluates achievements  │
+└───────────────────────────────────┘
+```
+
+## How to Try It
+
+1. Download the latest NES core binary (`NES_*.rbf`) from the [Releases](https://github.com/odelot/NES_MiSTer/releases) page.
+2. Copy the `.rbf` file to `/media/fat/_Console/` on your MiSTer SD card (replacing or alongside the stock NES core).
+3. You will also need the **modified Main_MiSTer binary** from [odelot/Main_MiSTer](https://github.com/odelot/Main_MiSTer) — follow the setup instructions there to configure your RetroAchievements credentials.
+4. Reboot your MiSTer, load the NES core, and open a game that has achievements on [retroachievements.org](https://retroachievements.org/).
+
+## Building from Source
+
+Open the project in Quartus Prime (use the same version as the upstream MiSTer NES core) and compile. The `ra_ram_mirror.sv` file is already included in `files.qip`.
+
+## Links
+
+- Original NES core: [MiSTer-devel/NES_MiSTer](https://github.com/MiSTer-devel/NES_MiSTer)
+- Modified Main binary (required): [odelot/Main_MiSTer](https://github.com/odelot/Main_MiSTer)
+- RetroAchievements: [retroachievements.org](https://retroachievements.org/)
+
+---
+
+# Original NES Core Documentation
+
+*Everything below is from the upstream [NES_MiSTer](https://github.com/MiSTer-devel/NES_MiSTer) README and applies unchanged to this fork.*
+
+## [Nintendo Entertainment System](https://en.wikipedia.org/wiki/Nintendo_Entertainment_System) for [MiSTer Platform](https://github.com/MiSTer-devel/Main_MiSTer/wiki)
 
 This is an FPGA implementation of the NES/Famicom based on [FPGANES](https://github.com/strigeus/fpganes) by Ludvig Strigeus and ported to MiSTer.
 
