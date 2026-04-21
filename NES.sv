@@ -213,10 +213,10 @@ always @(posedge clk) begin
 end
 
 // Status Bit Map:
-// 0         1         2         3          4         5         6
-// 01234567890123456789012345678901 23456789012345678901234567890123
-// 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
-// XXXXXXXX XX     XXXXXXXXXXXXX XX XXXXXXXXXXXXXXXXXXXXXX
+// 0         1         2         3          4         5         6         7
+// 01234567890123456789012345678901 23456789012345678901234567890123 01234567
+// 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456
+// XXXXXXXX XX     XXXXXXXXXXXXX XX XXXXXXXXXXXXXXXXXXXXXX           X
 
 `include "build_id.v"
 parameter CONF_STR = {
@@ -226,7 +226,7 @@ parameter CONF_STR = {
 	"-;",
 	"ONO,System Type,Auto,NTSC,PAL,Dendy;",
 	"-;",
-	"C,Cheats;",
+	"H8C,Cheats;",
 	"H2OK,Cheats Enabled,On,Off;",
 	"-;",
 	"oI,Autosave,On,Off;",
@@ -274,7 +274,7 @@ parameter CONF_STR = {
 	"P4O[64],PPU Reset Behavior,Famicom,NES;",
 	"P4OQ,Video Dijitter,Enabled,Disabled;",
 	"P4O[69],Debug Dots,Off,On;",
-	"-  ;",
+	"-;",
 	"R0,Reset;",
 	"J1,A,B,Select,Start,FDS,Mic,Zapper/Vaus Btn,PP/Mat 1,PP/Mat 2,PP/Mat 3,PP/Mat 4,PP/Mat 5,PP/Mat 6,PP/Mat 7,PP/Mat 8,PP/Mat 9,PP/Mat 10,PP/Mat 11,PP/Mat 12,Savestates;",
 	"jn,A,B,Select,Start,L,,R|P;",
@@ -307,6 +307,8 @@ wire [10:0] ps2_key;
 wire [1:0] buttons;
 
 wire [127:0] status;
+
+wire hardcore = status[70];
 
 wire arm_reset = status[0];
 wire [1:0] hide_overscan = status[68:67];
@@ -433,7 +435,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.paddle_3(pdl[3]),
 
 	.status(status),
-	.status_menumask({(rom_loaded && mapper_has_savestate), en216p, ~status[50], ~raw_serial, (palette2_osd != 3'd5), ~gg_avail, bios_loaded, ~bk_ena}),
+	.status_menumask({hardcore, (rom_loaded && mapper_has_savestate && ~hardcore), en216p, ~status[50], ~raw_serial, (palette2_osd != 3'd5), (~gg_avail | hardcore), bios_loaded, ~bk_ena}),
 	.status_in({status[63:47],ss_slot,status[44:0]}),
 	.status_set(statusUpdate),
 	.info_req(info_req),
@@ -880,7 +882,7 @@ NES nes (
 	.sys_type        (effective_sys_type),
 	.nes_div         (nes_ce),
 	.mapper_flags    (downloading ? 64'd0 : mapper_flags),
-	.gg              (status[20]),
+	.gg              (status[20] | hardcore),
 	.gg_code         (gg_code),
 	.gg_reset        (gg_reset && loader_clk && !ioctl_addr),
 	.gg_avail        (gg_avail),
@@ -1445,7 +1447,7 @@ savestate_ui savestate_ui
 (
 	.clk            (clk           ),
 	.ps2_key        (ps2_key_adjust),
-	.allow_ss       (rom_loaded & mapper_has_savestate),
+	.allow_ss       (rom_loaded & mapper_has_savestate & ~hardcore),
 	.joySS          (joyA_unmod[23]),
 	.joyRight       (joyA_unmod[0] ),
 	.joyLeft        (joyA_unmod[1] ),
