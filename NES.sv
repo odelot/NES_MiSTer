@@ -235,7 +235,7 @@ parameter CONF_STR = {
 	"-;",
 	"oC,Savestates to SDCard,On,Off;",
 	"oDE,Savestate Slot,1,2,3,4;",
-	"d7rA,Save state(Alt+F1-F4);",
+	"d9rA,Save state(Alt+F1-F4);",
 	"d7rB,Restore state(F1-F4);",
 	"-;",
 	"P1,Audio & Video;",
@@ -435,8 +435,8 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.paddle_3(pdl[3]),
 
 	.status(status),
-	.status_menumask({hardcore, (rom_loaded && mapper_has_savestate && ~hardcore), en216p, ~status[50], ~raw_serial, (palette2_osd != 3'd5), (~gg_avail | hardcore), bios_loaded, ~bk_ena}),
-	.status_in({status[63:47],ss_slot,status[44:0]}),
+	.status_menumask({(rom_loaded && mapper_has_savestate), hardcore, (rom_loaded && mapper_has_savestate && ~hardcore), en216p, ~status[50], ~raw_serial, (palette2_osd != 3'd5), (~gg_avail | hardcore), bios_loaded, ~bk_ena}),
+	.status_in({status[127:47],ss_slot,status[44:0]}),
 	.status_set(statusUpdate),
 	.info_req(info_req),
 	.info(info),
@@ -945,7 +945,7 @@ NES nes (
 	.mapper_has_savestate    (mapper_has_savestate),
 	.increaseSSHeaderCount   (!status[44]),
 	.save_state              (ss_save),
-	.load_state              (ss_load),
+	.load_state              (ss_load & ~hardcore),
 	.savestate_number        (ss_slot),
 	.sleep_savestate         (sleep_savestate),
 
@@ -1441,13 +1441,26 @@ wire statusUpdate;
 
 //Ignore F1-F4 when famicom keyboard is enabled
 wire skip_ps2 = (ps2_key[7:0] == 'h04) || (ps2_key[7:0] == 'h05) || (ps2_key[7:0] == 'h06) || (ps2_key[7:0] == 'h0C);
-wire [10:0] ps2_key_adjust = skip_ps2 && fkeyb ? 11'h0 : ps2_key[10:0];
+
+//Track Alt key state to allow Alt+F1-F4 (save) but block F1-F4 alone (load) in hardcore
+reg kbd_alt = 1'b0;
+reg kbd_strobe_old = 1'b0;
+always @(posedge clk) begin
+	kbd_strobe_old <= ps2_key[10];
+	if (kbd_strobe_old != ps2_key[10] && ps2_key[7:0] == 'h11) begin
+		kbd_alt <= ps2_key[9];
+	end
+end
+wire block_load_kbd = skip_ps2 && hardcore && !kbd_alt;
+
+wire [10:0] ps2_key_adjust = ((skip_ps2 && fkeyb) || block_load_kbd) ? 11'h0 : ps2_key[10:0];
 
 savestate_ui savestate_ui
 (
 	.clk            (clk           ),
 	.ps2_key        (ps2_key_adjust),
 	.allow_ss       (rom_loaded & mapper_has_savestate & ~hardcore),
+	.allow_save     (rom_loaded & mapper_has_savestate),
 	.joySS          (joyA_unmod[23]),
 	.joyRight       (joyA_unmod[0] ),
 	.joyLeft        (joyA_unmod[1] ),

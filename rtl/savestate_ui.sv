@@ -2,8 +2,9 @@ module savestate_ui #(parameter INFO_TIMEOUT_BITS)
 (
 	input            clk,    
    input     [10:0] ps2_key,     
-	input            allow_ss,    
-	input            joySS   ,    
+	input            allow_ss,
+	input            allow_save,
+	input            joySS   ,
 	input            joyRight,    
 	input            joyLeft ,    
 	input            joyDown ,    
@@ -56,16 +57,16 @@ always @(posedge clk) begin
 	
 	lastOSDsetting <= status_slot;
 	
-	if(allow_ss) begin
+	if(allow_ss | allow_save) begin
 	
 		// keyboard
 		if(old_state != ps2_key[10]) begin
 			case(ps2_key[7:0])
 				'h11: alt <= pressed;
-				'h05: begin ss_save <= pressed & alt; ss_load <= pressed & ~alt; ss_base <= 0; statusUpdate <= 1'b1; end // F1
-				'h06: begin ss_save <= pressed & alt; ss_load <= pressed & ~alt; ss_base <= 1; statusUpdate <= 1'b1; end // F2
-				'h04: begin ss_save <= pressed & alt; ss_load <= pressed & ~alt; ss_base <= 2; statusUpdate <= 1'b1; end // F3
-				'h0C: begin ss_save <= pressed & alt; ss_load <= pressed & ~alt; ss_base <= 3; statusUpdate <= 1'b1; end // F4
+				'h05: begin ss_save <= pressed & alt; ss_load <= pressed & ~alt & allow_ss; ss_base <= 0; statusUpdate <= 1'b1; end // F1
+				'h06: begin ss_save <= pressed & alt; ss_load <= pressed & ~alt & allow_ss; ss_base <= 1; statusUpdate <= 1'b1; end // F2
+				'h04: begin ss_save <= pressed & alt; ss_load <= pressed & ~alt & allow_ss; ss_base <= 2; statusUpdate <= 1'b1; end // F3
+				'h0C: begin ss_save <= pressed & alt; ss_load <= pressed & ~alt & allow_ss; ss_base <= 3; statusUpdate <= 1'b1; end // F4
 			endcase
 		end
 		
@@ -103,17 +104,17 @@ always @(posedge clk) begin
 			end
 			// save and load
 			if (joyStart & joyUp & ~lastUp) begin
-				ss_load     <= 1'b1;
+				ss_load     <= allow_ss;
 				InfoWaitcnt <= 25'b0;
 			end
 		end else begin
 			InfoWaitcnt <= 25'b0;
 		end
-		
+
 		// OSD
 		old_st <= OSD_saveload;
 		if(old_st[0] ^ OSD_saveload[0]) ss_save <= OSD_saveload[0];
-		if(old_st[1] ^ OSD_saveload[1]) ss_load <= OSD_saveload[1];
+		if(old_st[1] ^ OSD_saveload[1]) ss_load <= OSD_saveload[1] & allow_ss;
 
 		// infotexts
 		if (slotswitched) begin
