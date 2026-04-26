@@ -14,7 +14,7 @@
 //     [31:0]  = magic number 0x52414348 ("RACH")
 //     [39:32] = region_count
 //     [47:40] = flags (bit 0 = transfer in progress)
-//     [63:48] = reserved
+//     [63:48] = core_version: (major << 8) | minor
 //   Offset 0x08: Frame counter (64 bits)
 //     [31:0]  = frame counter (increments each VBlank)
 //     [63:32] = reserved
@@ -176,7 +176,7 @@ always @(posedge clk) begin
 		// -------------------------------------------------------
 		S_WRITE_HEADER: begin
 			ddram_addr <= ddram_base_addr;
-			ddram_din  <= {16'd0, 8'h01, REGION_COUNT[7:0], 32'h52414348}; // "RACH", count, busy=1
+			ddram_din  <= {16'h0200, 8'h01, REGION_COUNT[7:0], 32'h52414348}; // "RACH", count, busy=1, version=2.0
 			ddram_be   <= 8'hFF;
 			ddram_req  <= 1'b1;
 			state      <= S_WRITE_FRAME;
@@ -354,7 +354,7 @@ always @(posedge clk) begin
 		// -------------------------------------------------------
 		S_FINISH_HEADER: begin
 			ddram_addr <= ddram_base_addr;
-			ddram_din  <= {16'd0, 8'h00, REGION_COUNT[7:0], 32'h52414348}; // busy=0
+			ddram_din  <= {16'h0200, 8'h00, REGION_COUNT[7:0], 32'h52414348}; // busy=0
 			ddram_be   <= 8'hFF;
 			ddram_req  <= 1'b1;
 			state      <= S_WAIT_DDRAM2;
@@ -375,7 +375,7 @@ always @(posedge clk) begin
 		// -------------------------------------------------------
 		S_ABORT: begin
 			ddram_addr <= ddram_base_addr;
-			ddram_din  <= {16'd0, 8'h00, REGION_COUNT[7:0], 32'h52414348}; // busy=0
+			ddram_din  <= {16'h0200, 8'h00, REGION_COUNT[7:0], 32'h52414348}; // busy=0
 			ddram_be   <= 8'hFF;
 			ddram_req  <= 1'b1;
 			frame_counter <= frame_counter - 1'd1; // Roll back: this frame was incomplete
