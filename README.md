@@ -2,6 +2,8 @@
 
 This is a fork of the [MiSTer-devel NES core](https://github.com/MiSTer-devel/NES_MiSTer) with modifications to support **RetroAchievements** on MiSTer FPGA.
 
+The integration now covers both **NES (console ID 7)** and **Famicom Disk System (console ID 91)** titles, and includes core-level restrictions required for **hardcore mode** on the NES/FDS path.
+
 > **Status:** Experimental / Proof of Concept
 >
 > This core must be used together with the [modified Main_MiSTer binary](https://github.com/odelot/Main_MiSTer).
@@ -13,7 +15,7 @@ Pre-built `.rbf` files are available on the [Releases](https://github.com/odelot
 1. Download the latest `NES_*.rbf` from this repo's [Releases](https://github.com/odelot/NES_MiSTer/releases).
 2. Copy it to `/media/fat/_Console/` on your MiSTer SD card, replacing the original NES core.
 3. You also need the **modified Main_MiSTer binary** — download it from [odelot/Main_MiSTer Releases](https://github.com/odelot/Main_MiSTer/releases) and follow its README to set up `retroachievements.cfg`.
-4. Set up your NES ROMs as described in the [Original Core Features](#original-core-features) section below.
+4. Set up your NES/FDS content as described in the [Original Core Features](#original-core-features) section below. For FDS, make sure you also provide `boot0.rom` (official FDS BIOS).
 5. Reboot, load the NES core, and open a game that has achievements on [retroachievements.org](https://retroachievements.org/).
 
 ## What's Different from the Original
@@ -50,6 +52,16 @@ The `ra_ram_mirror` module runs a state machine triggered on each VBlank (~60 Hz
 
 The DDRAM arbiter (`ddram` module) was extended with a second channel (ch2) dedicated to this mirror, so it doesn't interfere with savestate operations on ch1.
 
+### FDS RetroAchievements Support
+
+RetroAchievements for FDS is handled through the same NES mirror path in hardware, with console identification done on the ARM side:
+
+1. If the loaded file ends with `.fds`, Main_MiSTer switches from NES handler (ID 7) to FDS handler (ID 91).
+2. The FDS hash path strips the 16-byte fwNES header (`FDS\x1A`) before computing MD5.
+3. rcheevos then resolves the game against the FDS set instead of the NES set.
+
+This allows FDS achievements without needing a separate FPGA mirror module.
+
 ### Architecture Diagram
 
 ```
@@ -75,9 +87,9 @@ The DDRAM arbiter (`ddram` module) was extended with a second channel (ch2) dedi
 └───────────────────────────────────┘
 ```
 
-### Hardcore Mode Behaviour (experimental feature - not supported by RA at the moment)
+### Hardcore Mode Behaviour (NES/FDS)
 
-When `hardcore=1` is set in `retroachievements.cfg`:
+When `hardcore=1` is set in `retroachievements.cfg` and the game is running on the NES/FDS path:
 
 | Action | Allowed? |
 |--------|----------|
