@@ -1,25 +1,37 @@
 # NES_MiSTer — RetroAchievements Fork
 
-This is a fork of the official [NES core for MiSTer](https://github.com/MiSTer-devel/NES_MiSTer) with modifications to support **RetroAchievements** on MiSTer FPGA.
+This is a fork of the [MiSTer-devel NES core](https://github.com/MiSTer-devel/NES_MiSTer) with modifications to support **RetroAchievements** on MiSTer FPGA.
 
-> **Status:** Experimental / Proof of Concept — works together with the [modified Main_MiSTer binary](https://github.com/odelot/Main_MiSTer).
+> **Status:** Experimental / Proof of Concept
+>
+> This core must be used together with the [modified Main_MiSTer binary](https://github.com/odelot/Main_MiSTer).
+
+## How to Test
+
+Pre-built `.rbf` files are available on the [Releases](https://github.com/odelot/NES_MiSTer/releases) page — no need to compile the core yourself.
+
+1. Download the latest `NES_*.rbf` from this repo's [Releases](https://github.com/odelot/NES_MiSTer/releases).
+2. Copy it to `/media/fat/_Console/` on your MiSTer SD card, replacing the original NES core.
+3. You also need the **modified Main_MiSTer binary** — download it from [odelot/Main_MiSTer Releases](https://github.com/odelot/Main_MiSTer/releases) and follow its README to set up `retroachievements.cfg`.
+4. Set up your NES ROMs as described in the [Original Core Features](#original-core-features) section below.
+5. Reboot, load the NES core, and open a game that has achievements on [retroachievements.org](https://retroachievements.org/).
 
 ## What's Different from the Original
 
-The upstream NES core is a pure FPGA NES/Famicom implementation. This fork adds a single new module and minor wiring changes so the ARM side (Main_MiSTer) can read emulated NES RAM for achievement evaluation. **No emulation logic was changed** — the core plays games identically to the original.
+The [upstream NES core](https://github.com/MiSTer-devel/NES_MiSTer) is an FPGA NES/Famicom implementation. This fork adds a **RAM mirroring module** that exposes CPU RAM and Cart SRAM to the ARM CPU for RetroAchievements evaluation, plus hardcore mode enforcement at the FPGA level.
 
-### Added File
+### Files Added
 
 | File | Purpose |
 |------|---------|
-| `rtl/ra_ram_mirror.sv` | Copies emulated NES RAM from SDRAM to DDRAM every VBlank so the ARM CPU can read it |
+| `rtl/ra_ram_mirror.sv` | Copies CPU RAM (2 KB) and Cart SRAM (8 KB) to DDRAM every VBlank using the Full Mirror protocol |
 
-### Modified Files
+### Files Modified
 
 | File | Change |
 |------|--------|
-| `NES.sv` | Instantiates `ra_ram_mirror` and wires it to SDRAM channel 2 and a new DDRAM channel |
-| `files.qip` | Adds `rtl/ra_ram_mirror.sv` to the Quartus project |
+| `NES.sv` | Instantiates the RA mirror; enforces hardcore mode (disables state loading and cheats via FPGA control bits; state saving is still allowed) |
+| `rtl/savestate_ui.sv` | Added `allow_save` input to allow save-state hotkeys independently of `allow_ss` (load), so saving works in hardcore while loading is blocked |
 
 ### How the RAM Mirror Works
 
@@ -63,30 +75,25 @@ The DDRAM arbiter (`ddram` module) was extended with a second channel (ch2) dedi
 └───────────────────────────────────┘
 ```
 
-## How to Try It
+### Hardcore Mode Behaviour (experimental feature - not supported by RA at the moment)
 
-1. Download the latest NES core binary (`NES_*.rbf`) from the [Releases](https://github.com/odelot/NES_MiSTer/releases) page.
-2. Copy the `.rbf` file to `/media/fat/_Console/` on your MiSTer SD card (replacing or alongside the stock NES core).
-3. You will also need the **modified Main_MiSTer binary** from [odelot/Main_MiSTer](https://github.com/odelot/Main_MiSTer) — follow the setup instructions there to configure your RetroAchievements credentials.
-4. Reboot your MiSTer, load the NES core, and open a game that has achievements on [retroachievements.org](https://retroachievements.org/).
+When `hardcore=1` is set in `retroachievements.cfg`:
 
-## Building from Source
+| Action | Allowed? |
+|--------|----------|
+| Save state (Alt+F1–F4 / OSD) | ✅ Yes |
+| Load / restore state (F1–F4 / OSD) | ❌ No |
+| Cheat codes | ❌ No |
 
-Open the project in Quartus Prime (use the same version as the upstream MiSTer NES core) and compile. The `ra_ram_mirror.sv` file is already included in `files.qip`.
+Saving is permitted so players can keep progress snapshots for other purposes; only *loading* a state (which would skip gameplay) is blocked. The `restore_state` signal is gated by `~hardcore` in hardware, and the keyboard shortcut for restore (F1–F4 without Alt) is suppressed at the input layer.
 
-## Links
+## Original Core Features
 
-- Original NES core: [MiSTer-devel/NES_MiSTer](https://github.com/MiSTer-devel/NES_MiSTer)
-- Modified Main binary (required): [odelot/Main_MiSTer](https://github.com/odelot/Main_MiSTer)
-- RetroAchievements: [retroachievements.org](https://retroachievements.org/)
+Below is the original README content from the upstream NES core.
 
 ---
 
-# Original NES Core Documentation
-
-*Everything below is from the upstream [NES_MiSTer](https://github.com/MiSTer-devel/NES_MiSTer) README and applies unchanged to this fork.*
-
-## [Nintendo Entertainment System](https://en.wikipedia.org/wiki/Nintendo_Entertainment_System) for [MiSTer Platform](https://github.com/MiSTer-devel/Main_MiSTer/wiki)
+# [Nintendo Entertainment System](https://en.wikipedia.org/wiki/Nintendo_Entertainment_System) for [MiSTer Platform](https://github.com/MiSTer-devel/Main_MiSTer/wiki)
 
 This is an FPGA implementation of the NES/Famicom based on [FPGANES](https://github.com/strigeus/fpganes) by Ludvig Strigeus and ported to MiSTer.
 
