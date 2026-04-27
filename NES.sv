@@ -1523,10 +1523,13 @@ wire [7:0] chrrom = ines[5];	// Number of 8192 byte character ROM pages (0 indic
 wire [3:0] chrram = ines[11][3:0]; // NES 2.0 CHR-RAM size shift count (64 << count)
 wire has_chr_ram = ~is_nes20 ? (chrrom == 0) : |chrram;
 
-assign mem_data = (state == S_CLEARRAM || (~copybios && state == S_COPYBIOS)) ? (clearval && ~(state == S_COPYBIOS) ? (mapper == 8'd232 ? 8'h00 : cleardata) : 8'h00) : indata;
+assign mem_data = (state == S_CLEARRAM || (~copybios && state == S_COPYBIOS)) ? (clearval && ~(state == S_COPYBIOS) ? (mapper == 8'd232 ? 8'h00 : cleardata) : 8'h00)
+	: (state == S_CLEAR_RA_CPU || state == S_CLEAR_RA_CART) ? 8'h00
+	: indata;
 assign mem_write = (((bytes_left != 0) && (state == S_LOADPRG || state == S_LOADCHR || state == S_LOADEXTRA)
 	|| (downloading && (state == S_LOADHEADER || state == S_LOADFDS || state == S_LOADNSFH || state == S_LOADNSFD))) && indata_clk)
-	|| ((bytes_left != 0) && ((state == S_CLEARRAM) || (state == S_COPYBIOS) || (state == S_COPYPLAY)) && clearclk == 4'h2);
+	|| ((bytes_left != 0) && ((state == S_CLEARRAM) || (state == S_COPYBIOS) || (state == S_COPYPLAY)
+		|| (state == S_CLEAR_RA_CPU) || (state == S_CLEAR_RA_CART)) && clearclk == 4'h2);
 
 // detect iNES2.0 compliant header
 wire is_nes20 = (ines[7][3:2] == 2'b10);
@@ -1609,7 +1612,7 @@ reg [3:0] clearclk; //Wait for SDRAM
 reg copybios;
 reg cleardone;
 
-typedef enum bit [3:0] { S_LOADHEADER, S_LOADPRG, S_LOADCHR, S_LOADEXTRA, S_LOADFDS, S_ERROR, S_CLEARRAM, S_COPYBIOS, S_LOADNSFH, S_LOADNSFD, S_COPYPLAY, S_DONE } mystate;
+typedef enum bit [3:0] { S_LOADHEADER, S_LOADPRG, S_LOADCHR, S_LOADEXTRA, S_LOADFDS, S_ERROR, S_CLEARRAM, S_COPYBIOS, S_LOADNSFH, S_LOADNSFD, S_COPYPLAY, S_DONE, S_CLEAR_RA_CPU, S_CLEAR_RA_CART } mystate;
 mystate state;
 
 wire type_bios = filetype[0];
@@ -1706,8 +1709,13 @@ always @(posedge clk) begin
 				clearclk <= 4'h0;
 				cleardone <= 1;
 			end else begin
-				done <= 1;
-				busy <= 0;
+				// RetroAchievements safety: always clear NES CPU RAM (2KB at 0x380000)
+				// and CARTRAM (8KB at 0x3C0000) so leftover bytes from a previous game
+				// cannot trigger achievements before the new game initializes RAM.
+				mem_addr <= 25'b0_0011_1000_0000_0000_0000_0000; // 0x380000 — CPU RAM
+				bytes_left <= 21'h0_0800;                        // 2KB
+				state <= S_CLEAR_RA_CPU;
+				clearclk <= 4'h0;
 			end
 		end
 		S_ERROR: begin
@@ -1766,6 +1774,34 @@ always @(posedge clk) begin
 					mem_addr <= mem_addr + 1'd1;
 				end
 			 end else begin
+				state <= S_DONE;
+			end
+		end
+		// RetroAchievements safety clear: CPU RAM (2KB @ 0x380000)
+		S_CLEAR_RA_CPU: begin
+			clearclk <= clearclk + 4'h1;
+			if (bytes_left != 21'h0) begin
+				if (clearclk == 4'hF) begin
+					bytes_left <= bytes_left - 1'd1;
+					mem_addr <= mem_addr + 1'd1;
+				end
+			end else begin
+				// CPU RAM done — chain into CARTRAM clear
+				mem_addr <= 25'b0_0011_1100_0000_0000_0000_0000; // 0x3C0000
+				bytes_left <= 21'h0_2000;                        // 8KB
+				state <= S_CLEAR_RA_CART;
+				clearclk <= 4'h0;
+			end
+		end
+		// RetroAchievements safety clear: CARTRAM (8KB @ 0x3C0000)
+		S_CLEAR_RA_CART: begin
+			clearclk <= clearclk + 4'h1;
+			if (bytes_left != 21'h0) begin
+				if (clearclk == 4'hF) begin
+					bytes_left <= bytes_left - 1'd1;
+					mem_addr <= mem_addr + 1'd1;
+				end
+			end else begin
 				state <= S_DONE;
 			end
 		end
