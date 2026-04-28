@@ -32,7 +32,7 @@ module ddram
 	output  [7:0] DDRAM_BE,
 	output        DDRAM_WE,
 	
-	// ch1: save state
+	// ch1: save state (uses [27:1] hword addressing, 0x30000000 prefix added here)
 	input  [27:1] ch1_addr,
 	output [63:0] ch1_dout,
 	input  [63:0] ch1_din,
@@ -41,19 +41,24 @@ module ddram
 	input  [7:0]  ch1_be,
 	output        ch1_ready,
 
-	// ch2: RetroAchievements RAM mirror (write-only to DDRAM)
-	input  [27:1] ch2_addr,
-	input  [63:0] ch2_din,
-	input         ch2_req,
-	input         ch2_rnw,
-	input  [7:0]  ch2_be,
-	output        ch2_ready
+	// RetroAchievements write channel (uses [28:0] direct Avalon addressing)
+	input  [28:0] ra_addr,
+	input  [63:0] ra_din,
+	input   [7:0] ra_be,
+	input         ra_req,
+	output reg    ra_ack,
+
+	// RetroAchievements read channel (uses [28:0] direct Avalon addressing)
+	input  [28:0] ra_rd_addr,
+	input         ra_rd_req,
+	output reg    ra_rd_ack,
+	output reg [63:0] ra_dout
 );
 
 reg  [7:0] ram_burst;
-reg [63:0] ram_q[2:1];
+reg [63:0] ram_q[1:1];
 reg [63:0] ram_data;
-reg [27:1] ram_address;
+reg [28:0] ram_address;    // Full 29-bit Avalon address
 reg        ram_read = 0;
 reg        ram_write = 0;
 reg  [7:0] ram_be;
@@ -62,22 +67,22 @@ reg  [5:1] ready;
 
 assign DDRAM_BURSTCNT = ram_burst;
 assign DDRAM_BE       = ram_read ? 8'hFF : ram_be;
-assign DDRAM_ADDR     = {4'b0011, ram_address[27:3]}; // RAM at 0x30000000
+assign DDRAM_ADDR     = ram_address;
 assign DDRAM_RD       = ram_read;
 assign DDRAM_DIN      = ram_data;
 assign DDRAM_WE       = ram_write;
 
 assign ch1_dout  = ram_q[1];
 assign ch1_ready = ready[1];
-assign ch2_ready = ready[2];
 
 reg        state  = 0;
-reg  [1:0] ch = 0; 
-reg  [2:1] ch_rq;
+reg        ch1_rq = 0;
+reg        ra_wr_pending = 0;
+reg        ra_rd_pending = 0;
 
 always @(posedge DDRAM_CLK) begin
 
-	ch_rq <= ch_rq | {ch2_req, ch1_req};
+	ch1_rq <= ch1_rq | ch1_req;
 	ready <= 0;
 
 	if(!DDRAM_BUSY) begin
@@ -85,12 +90,11 @@ always @(posedge DDRAM_CLK) begin
 		ram_read  <= 0;
 
 		case(state)
-			0: if(ch_rq[1] || ch1_req) begin
-					ch_rq[1]         <= 0;
-					ch               <= 1;
+			0: if(ch1_rq || ch1_req) begin
+					ch1_rq           <= 0;
 					ram_data         <= ch1_din;
 					ram_be           <= ch1_be;
-					ram_address      <= ch1_addr;
+					ram_address      <= {4'b0011, ch1_addr[27:3]}; // Add 0x30000000 prefix
 					ram_burst        <= 1;
 					if(~ch1_rnw) begin
 						ram_write     <= 1;
@@ -101,29 +105,45 @@ always @(posedge DDRAM_CLK) begin
 						state         <= 1;
 					end
 				end
-				else if(ch_rq[2] || ch2_req) begin
-					ch_rq[2]         <= 0;
-					ch               <= 2;
-					ram_data         <= ch2_din;
-					ram_be           <= ch2_be;
-					ram_address      <= ch2_addr;
+				else if(ra_req != ra_ack) begin
+					// RA write: address already in Avalon format
+					ram_be           <= ra_be;
+					ram_data         <= ra_din;
+					ram_address      <= ra_addr;  // Direct Avalon address
 					ram_burst        <= 1;
-					if(~ch2_rnw) begin
-						ram_write     <= 1;
-						ready[2]      <= 1;
-					end
-					else begin
-						ram_read      <= 1;
-						state         <= 1;
-					end
+					ram_write        <= 1;
+					ra_wr_pending    <= 1;
+					state            <= 1;
+				end
+				else if(ra_rd_req != ra_rd_ack) begin
+					// RA read: address already in Avalon format
+					ram_address      <= ra_rd_addr;  // Direct Avalon address
+					ram_read         <= 1;
+					ram_burst        <= 1;
+					ra_rd_pending    <= 1;
+					state            <= 1;
 				end
 
-			1: if(DDRAM_DOUT_READY) begin
-					ram_q[ch]        <= DDRAM_DOUT;
-					ready[ch]        <= 1;
-					state            <= 0;
+			1: begin
+					if(ra_wr_pending) begin
+						ra_ack <= ra_req;
+						ra_wr_pending <= 0;
+						state <= 0;
+					end
+					else if(ra_rd_pending) begin
+						if(DDRAM_DOUT_READY) begin
+							ra_dout <= DDRAM_DOUT;
+							ra_rd_ack <= ra_rd_req;
+							ra_rd_pending <= 0;
+							state <= 0;
+						end
+					end
+					else if(DDRAM_DOUT_READY) begin
+						ram_q[1]         <= DDRAM_DOUT;
+						ready[1]         <= 1;
+						state            <= 0;
+					end
 				end
-
 		endcase
 	end
 end
