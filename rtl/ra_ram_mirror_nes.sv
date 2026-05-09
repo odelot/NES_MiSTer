@@ -29,6 +29,7 @@ module ra_ram_mirror_nes #(
 	input             clk,           // clk_sys (NES ~21.477 MHz)
 	input             reset,
 	input             vblank,
+	input             fds_mode,       // 1 when FDS mapper (mapper 20) is active
 
 	// SDRAM read interface (ch2)
 	output reg [24:0] sdram_addr,
@@ -63,7 +64,8 @@ localparam [12:0] MAX_ADDRS     = 13'd4096;
 
 // NES SDRAM address bases
 localparam [24:0] CPURAM_BASE  = 25'h380000;   // 2KB CPU RAM
-localparam [24:0] CARTRAM_BASE = 25'h3C0000;   // 8KB CART RAM
+localparam [24:0] CARTRAM_BASE = 25'h3C0000;   // 8KB Cart WRAM ($6000-$7FFF, non-FDS)
+localparam [24:0] FDSRAM_BASE  = 25'h208000;   // 32KB FDS Work RAM ($6000-$DFFF)
 
 // Realtime query mailbox
 localparam [28:0] QUERY_CTRL_ADDR = DDRAM_BASE + 29'hA000;
@@ -187,7 +189,12 @@ function [24:0] nes_to_sdram;
 	begin
 		if (addr < 32'h2000)
 			nes_to_sdram = CPURAM_BASE + {14'd0, addr[10:0] & 11'h7FF};
+		else if (fds_mode && addr >= 32'h6000 && addr < 32'hE000)
+			// FDS Work RAM $6000-$DFFF -> SDRAM 0x208000 | addr[14:0]
+			// (matches FDS mapper: prg_addr = {7'b10_0000_1, prg_ain[14:0]})
+			nes_to_sdram = FDSRAM_BASE | {10'd0, addr[14:0]};
 		else if (addr >= 32'h6000 && addr < 32'h8000)
+			// Cart WRAM (non-FDS): $6000-$7FFF -> SDRAM 0x3C0000 + (addr - 0x6000)
 			nes_to_sdram = CARTRAM_BASE + {12'd0, addr[12:0] - 13'h6000};
 		else
 			nes_to_sdram = 25'h0; // Invalid — should not happen
@@ -195,7 +202,10 @@ function [24:0] nes_to_sdram;
 endfunction
 
 wire addr_is_cpuram  = (cur_addr < 32'h2000);
-wire addr_is_cartram = (cur_addr >= 32'h6000 && cur_addr < 32'h8000);
+// FDS Work RAM covers $6000-$DFFF; Cart WRAM (non-FDS) only $6000-$7FFF
+wire addr_is_cartram = fds_mode
+                       ? (cur_addr >= 32'h6000 && cur_addr < 32'hE000)
+                       : (cur_addr >= 32'h6000 && cur_addr < 32'h8000);
 wire addr_valid      = addr_is_cpuram | addr_is_cartram;
 
 // ======================================================================
@@ -251,7 +261,6 @@ always @(posedge clk) begin
 				ddram_rd_req  <= ~ddram_rd_req;
 				return_state  <= S_QRY_PARSE;
 				state         <= S_DD_RD_WAIT;
-			end
 			end
 			else begin
 				qry_poll_timer <= 11'd0;  // no rtquery active, skip poll

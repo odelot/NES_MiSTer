@@ -1416,6 +1416,7 @@ ra_ram_mirror_nes ra_mirror (
 	.clk             (clk),
 	.reset           (reset_nes),
 	.vblank          (nes_vblank & ~bk_busy & ~sleep_savestate),
+	.fds_mode        (fds),
 	.sdram_addr      (ra_sdram_addr),
 	.sdram_rd        (ra_sdram_rd),
 	.sdram_dout      (save_dout),
