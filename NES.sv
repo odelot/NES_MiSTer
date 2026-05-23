@@ -869,7 +869,7 @@ always_ff @(posedge clk) begin
 	end
 end
 
-wire nes_hblank, nes_hsync, nes_vsync, nes_vblank;
+wire nes_hblank, nes_hsync, nes_vsync, nes_vblank, nes_entering_vblank;
 
 NES nes (
 	.clk             (clk),
@@ -1416,7 +1416,7 @@ ddram ddram
 ra_ram_mirror_nes ra_mirror (
 	.clk             (clk),
 	.reset           (reset_nes),
-	.vblank          (nes_vblank & ~bk_busy & ~sleep_savestate),
+	.vblank          (nes_entering_vblank & ~bk_busy & ~sleep_savestate),
 	.fds_mode        (fds),
 	.sdram_addr      (ra_sdram_addr),
 	.sdram_rd        (ra_sdram_rd),
