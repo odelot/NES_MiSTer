@@ -149,6 +149,7 @@ module NES(
 	output        hblank,
 	output        vsync,
 	output        vblank,
+	output        entering_vblank,
 
 	output [24:0] Savestate_SDRAMAddr,
 	output        Savestate_SDRAMRdEn,
@@ -385,7 +386,7 @@ ClockGen clockgen_pause(
 	//.end_of_line         (end_of_line),
 	//.at_last_cycle_group (at_last_cycle_group),
 	//.exiting_vblank      (exiting_vblank),
-	//.entering_vblank     (entering_vblank),
+	.entering_vblank     (entering_vblank),
 	//.is_pre_render       (is_pre_render_line),
 	.short_frame         (skip_pixel_pause),
 	//.is_vbe_sl           (is_vbe_sl)

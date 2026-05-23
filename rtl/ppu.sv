@@ -1261,6 +1261,7 @@ module PPU(
 	output        vsync,
 	output        hblank,
 	output        vblank,
+	output        entering_vblank,
 	output        short_frame,
 	input         extra_sprites,
 	input  [1:0]  mask,
@@ -1343,7 +1344,6 @@ wire is_in_vblank;        // True if we're in VBLANK
 wire end_of_line;         // At the last pixel of a line
 wire at_last_cycle_group; // At the very last cycle group of the scan line.
 wire exiting_vblank;      // At the very last cycle of the vblank
-wire entering_vblank;     //
 wire is_pre_render_line;  // True while we're on the pre render scanline
 
 reg enable_playfield, enable_objects;

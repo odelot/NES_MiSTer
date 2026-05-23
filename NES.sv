@@ -899,6 +899,7 @@ NES nes (
 	.hblank          (nes_hblank),
 	.vsync           (nes_vsync),
 	.vblank          (nes_vblank),
+	.entering_vblank (nes_entering_vblank),
 	.emphasis        (emphasis),
 	.cycle           (cycle),
 	.scanline        (scanline),
