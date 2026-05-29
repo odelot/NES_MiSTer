@@ -870,6 +870,9 @@ always_ff @(posedge clk) begin
 end
 
 wire nes_hblank, nes_hsync, nes_vsync, nes_vblank, nes_entering_vblank;
+// Pre-VBlank trigger: last cycle of last active scanline (2 lines before NMI at sl=241)
+// Mirrors RANes behavior: achievements evaluated after game logic but before NMI clears pulsed values
+wire nes_pre_vblank = (scanline == 9'd239) && (cycle == 9'd340);
 
 NES nes (
 	.clk             (clk),
@@ -1416,7 +1419,7 @@ ddram ddram
 ra_ram_mirror_nes ra_mirror (
 	.clk             (clk),
 	.reset           (reset_nes),
-	.vblank          (nes_entering_vblank & ~bk_busy & ~sleep_savestate),
+	.vblank          (nes_pre_vblank & ~bk_busy & ~sleep_savestate),
 	.fds_mode        (fds),
 	.sdram_addr      (ra_sdram_addr),
 	.sdram_rd        (ra_sdram_rd),
