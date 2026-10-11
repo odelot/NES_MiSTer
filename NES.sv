@@ -1038,10 +1038,13 @@ always @(posedge clk) begin
 	end
 end
 
-// --- RetroAchievements RAM mirror signals (Option C) ---
-wire [24:0] ra_sdram_addr;
-wire        ra_sdram_rd;
+// --- RetroAchievements RAM mirror signals (BRAM write-snoop) ---
 wire        ra_active;
+
+// SDRAM write snoop (clk85 domain) feeding the RA mirror BRAM
+wire        sdram_snoop_we;
+wire [24:0] sdram_snoop_addr;
+wire  [7:0] sdram_snoop_din;
 
 // RA DDRAM channels (toggle req/ack)
 wire [28:0] ra_ddram_wr_addr;
@@ -1054,16 +1057,12 @@ wire        ra_ddram_rd_req;
 wire        ra_ddram_rd_ack;
 wire [63:0] ra_ddram_rd_dout;
 
-// RA mirror can use SDRAM ch2 only when savestate and backup RAM are idle
-wire ra_sdram_active = ra_active & ~sleep_savestate & ~bk_busy;
-
 wire [24:0] ch2_addr = sleep_savestate ? Savestate_SDRAMAddr :
-                       bk_busy ? (mapper_has_flashsaves ? {6'b000000, save_addr} : {7'b0001111, save_addr[17:0]}) :
-                       ra_sdram_active ? ra_sdram_addr :
-                       (mapper_has_flashsaves ? {6'b000000, save_addr} : {7'b0001111, save_addr[17:0]});
-wire        ch2_wr   = sleep_savestate ? Savestate_SDRAMWrEn      : (ra_sdram_active ? 1'b0 : save_wr);
+                       mapper_has_flashsaves ? {6'b000000, save_addr} : // PRG-ROM
+                       {7'b0001111, save_addr[17:0]};                   // CARTRAM
+wire        ch2_wr   = sleep_savestate ? Savestate_SDRAMWrEn      : save_wr;
 wire  [7:0] ch2_din  = sleep_savestate ? Savestate_SDRAMWriteData : sd_buff_dout;
-wire        ch2_rd   = sleep_savestate ? Savestate_SDRAMRdEn      : (ra_sdram_active ? ra_sdram_rd : save_rd);
+wire        ch2_rd   = sleep_savestate ? Savestate_SDRAMRdEn      : save_rd;
 
 assign Savestate_SDRAMReadData = save_dout;
 
@@ -1101,7 +1100,11 @@ sdram sdram
 	.refresh    (refresh  ),
 	.ss_in      (sdram_ss_in),
 	.ss_load    (savestate_load),
-	.ss_out     (sdram_ss_out)
+	.ss_out     (sdram_ss_out),
+
+	.snoop_we   (sdram_snoop_we  ),
+	.snoop_addr (sdram_snoop_addr),
+	.snoop_din  (sdram_snoop_din )
 );
 
 wire [7:0] save_dout;
@@ -1416,15 +1419,18 @@ ddram ddram
 // ARM physical address: 0x3D000000 (below savestate area at 0x3E000000)
 // FPGA DWORD addr = (0x3D000000 - 0x30000000) / 4 = 0x3400000
 // ddram_base_addr [27:1] = DWORD_addr * 2 = 0x6800000
+// Fed by the SDRAM write snoop: never issues SDRAM reads, so it cannot
+// contend with CPU/PPU fetches. Capture is safe during autosave too.
 ra_ram_mirror_nes ra_mirror (
 	.clk             (clk),
 	.reset           (reset_nes),
-	.vblank          (nes_pre_vblank & ~bk_busy & ~sleep_savestate),
+	.vblank          (nes_pre_vblank),
 	.fds_mode        (fds),
-	.sdram_addr      (ra_sdram_addr),
-	.sdram_rd        (ra_sdram_rd),
-	.sdram_dout      (save_dout),
-	.sdram_busy      (save_busy),
+	.clk85           (clk85),
+	.snoop_we        (sdram_snoop_we),
+	.snoop_addr      (sdram_snoop_addr),
+	.snoop_din       (sdram_snoop_din),
+	.downloading     (downloading | loader_busy),
 	.ddram_wr_addr   (ra_ddram_wr_addr),
 	.ddram_wr_din    (ra_ddram_wr_din),
 	.ddram_wr_be     (ra_ddram_wr_be),
