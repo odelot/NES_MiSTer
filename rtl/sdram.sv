@@ -59,6 +59,11 @@ module sdram
 	input       [7:0] ch2_din,
 	output reg  [7:0] ch2_dout,
 	output reg        ch2_busy,
+
+	// write snoop: pulses once per granted write on any channel (RA RAM mirror)
+	output reg        snoop_we,
+	output reg [24:0] snoop_addr,
+	output reg  [7:0] snoop_din,
 	
 	input             refresh,
 	input      [15:0] ss_in,
@@ -107,6 +112,8 @@ always @(posedge clk) begin
 	old_rd <= old_rd & rd;
 	old_wr <= old_wr & wr;
 
+	snoop_we <= 0;
+
 	if(state == STATE_IDLE && mode == MODE_NORMAL) begin
 		ram_req <= 0;
 		we <= 0;
@@ -121,6 +128,9 @@ always @(posedge clk) begin
 			data <= {ch0_din,ch0_din};
 			ram_req <= wr[0] || (last_a[0] != ch0_addr[24:1]);
 			last_a[0] <= wr[0] ? '1 : ch0_addr[24:1];
+			snoop_we <= wr[0];
+			snoop_addr <= ch0_addr;
+			snoop_din <= ch0_din;
 			ch0_busy <= 1;
 			state <= STATE_START;
 		end
@@ -132,6 +142,9 @@ always @(posedge clk) begin
 			data <= {ch1_din,ch1_din};
 			ram_req <= wr[1] || (last_a[1] != ch1_addr[24:1]);
 			last_a[1] <= wr[1] ? '1 : ch1_addr[24:1];
+			snoop_we <= wr[1];
+			snoop_addr <= ch1_addr;
+			snoop_din <= ch1_din;
 			ch1_busy <= 1;
 			state <= STATE_START;
 		end
@@ -143,6 +156,9 @@ always @(posedge clk) begin
 			data <= {ch2_din,ch2_din};
 			ram_req <= wr[2] || (last_a[2] != ch2_addr[24:1]);
 			last_a[2] <= wr[2] ? '1 : ch2_addr[24:1];
+			snoop_we <= wr[2];
+			snoop_addr <= ch2_addr;
+			snoop_din <= ch2_din;
 			ch2_busy <= 1;
 			state <= STATE_START;
 		end
