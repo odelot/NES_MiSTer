@@ -34,6 +34,19 @@
 //   [0x00008] Frame:    frame_counter(32) + reserved(32)
 //   [0x00010] Debug1:   {ver(8), dispatch(8), first_dout(16), timeout(16), ok(16)}
 //   [0x00018] Debug2:   {first_addr(16), wram(16), cart(16), max_timeout(16)}
+//   [0x00048] CoreEvt:  frame(32) + save_seq(8) + load_seq(8) +
+//                       save_slot(2) + load_slot(2) + last_was_load(1) +
+//                       paused(1) + ss_events=1(1) + 0(1) + marker 0x53(8)
+//             (layout shared with the other cores; 0x20-0x38 are used by
+//             some of them, 0x40 is the ARM config word)
+//             Savestate operations completed before the capture of 'frame'
+//             (cumulative counters, never reset). Written before ValResp in
+//             the same flush, so when the ARM sees response_frame == frame
+//             it knows whether a save/load happened before that snapshot and
+//             can snapshot/restore the rcheevos progress before evaluating it.
+//             'paused' = this capture was taken while the core was held
+//             (OSD pause): the ARM must idle rcheevos instead of evaluating
+//             it, as emulators do while paused.
 //
 //   [0x40000] AddrReq:  addr_count(32) + request_id(32)       (ARM → FPGA)
 //   [0x40008] Addrs:    addr[0](32) + addr[1](32), ...        (2 per 64-bit word)
@@ -51,6 +64,14 @@ module ra_ram_mirror_nes #(
 	input             reset,
 	input             vblank,        // pre-vblank pulse (scanline 239, cycle 340)
 	input             fds_mode,      // 1 when FDS mapper (mapper 20) is active
+
+	// Completed savestate operations (1-cycle pulses, clk domain)
+	input             ss_evt_save,
+	input             ss_evt_load,
+	input       [1:0] ss_evt_slot,
+	// Core held (OSD pause): captures still run on the pause clock, flagged
+	// so the ARM idles rcheevos instead of evaluating frozen frames
+	input             core_paused,
 
 	// SDRAM write snoop (clk85 domain, from sdram.sv arbiter)
 	input             clk85,
@@ -250,6 +271,8 @@ localparam S_QRY_BW       = 6'd29;
 localparam S_QRY_B1       = 6'd30;
 localparam S_QRY_WR_RESP  = 6'd31;
 localparam S_QRY_WR_CTRL  = 6'd32;
+// savestate event word (flush)
+localparam S_FL_SSEVT     = 6'd33;
 
 reg [5:0]  state;
 reg [5:0]  return_state;
@@ -291,7 +314,30 @@ reg        cap_valid_lat;
 reg [31:0] bank_frame  [0:1];
 reg [31:0] bank_req_id [0:1];
 reg [12:0] bank_count  [0:1];
+reg [31:0] bank_ssevt  [0:1];
 reg        pending_valid;
+
+// Savestate event counters (cumulative; deliberately not cleared by reset:
+// the ARM only compares them for change against its own baseline)
+reg  [7:0] ss_save_seq  = 8'd0;
+reg  [7:0] ss_load_seq  = 8'd0;
+reg  [1:0] ss_save_slot = 2'd0;
+reg  [1:0] ss_load_slot = 2'd0;
+reg        ss_last_load = 1'b0;  // most recent operation was a load (orders a
+                                 // save+load pair that lands between two captures)
+always @(posedge clk) begin
+	if (ss_evt_save) begin
+		ss_save_seq  <= ss_save_seq + 8'd1;
+		ss_save_slot <= ss_evt_slot;
+		ss_last_load <= 1'b0;
+	end
+	if (ss_evt_load) begin
+		ss_load_seq  <= ss_load_seq + 8'd1;
+		ss_load_slot <= ss_evt_slot;
+		ss_last_load <= 1'b1;
+	end
+end
+wire [31:0] ss_word = {8'h53, 1'b0, 1'b1 /*ss_events*/, core_paused, ss_last_load, ss_load_slot, ss_save_slot, ss_load_seq, ss_save_seq};
 
 // Nested-capture return state (S_IDLE or the interrupted DDR wait state)
 reg [5:0]  cap_return_state;
@@ -380,6 +426,7 @@ always @(posedge clk) begin
 				else begin
 					// No list: empty capture so the frame counter still advances
 					bank_frame[cap_bank]  <= frame_counter + 32'd1;
+					bank_ssevt[cap_bank]  <= ss_word;
 					bank_req_id[cap_bank] <= cached_req_id;
 					bank_count[cap_bank]  <= 13'd0;
 					frame_counter         <= frame_counter + 32'd1;
@@ -423,6 +470,7 @@ always @(posedge clk) begin
 				end
 				else begin
 					bank_frame[cap_bank]  <= frame_counter + 32'd1;
+					bank_ssevt[cap_bank]  <= ss_word;
 					bank_req_id[cap_bank] <= cached_req_id;
 					bank_count[cap_bank]  <= 13'd0;
 					frame_counter         <= frame_counter + 32'd1;
@@ -458,6 +506,7 @@ always @(posedge clk) begin
 				end
 				else begin
 					bank_frame[cap_bank]  <= frame_counter + 32'd1;
+					bank_ssevt[cap_bank]  <= ss_word;
 					bank_req_id[cap_bank] <= cached_req_id;
 					bank_count[cap_bank]  <= 13'd0;
 					frame_counter         <= frame_counter + 32'd1;
@@ -515,6 +564,7 @@ always @(posedge clk) begin
 			cap_idx <= cap_idx + 13'd1;
 			if (cap_idx + 13'd1 >= cached_count) begin
 				bank_frame[cap_bank]  <= frame_counter + 32'd1;
+				bank_ssevt[cap_bank]  <= ss_word;
 				bank_req_id[cap_bank] <= cached_req_id;
 				bank_count[cap_bank]  <= cached_count;
 				frame_counter         <= frame_counter + 32'd1;
@@ -537,7 +587,7 @@ always @(posedge clk) begin
 			fl_word_idx      <= 13'd0;
 			fl_bytes_in_word <= 4'd0;
 			collect_buf      <= 64'd0;
-			return_state  <= (bank_count[flush_bank] == 13'd0) ? S_FL_RESP : S_FL_VRD_A;
+			return_state  <= (bank_count[flush_bank] == 13'd0) ? S_FL_SSEVT : S_FL_VRD_A;
 			state         <= S_DD_WR_WAIT;
 		end
 
@@ -567,7 +617,18 @@ always @(posedge clk) begin
 			fl_word_idx      <= fl_word_idx + 13'd1;
 			fl_bytes_in_word <= 4'd0;
 			collect_buf      <= 64'd0;
-			return_state  <= (fl_byte_ptr >= bank_count[flush_bank]) ? S_FL_RESP : S_FL_VRD_A;
+			return_state  <= (fl_byte_ptr >= bank_count[flush_bank]) ? S_FL_SSEVT : S_FL_VRD_A;
+			state         <= S_DD_WR_WAIT;
+		end
+
+		// Savestate event word, tagged with this bank's frame. Must land
+		// before the response header: the ARM keys on response_frame.
+		S_FL_SSEVT: begin
+			ddram_wr_addr <= DDRAM_BASE + 29'd9;   // byte offset 0x48
+			ddram_wr_din  <= {bank_ssevt[flush_bank], bank_frame[flush_bank]};
+			ddram_wr_be   <= 8'hFF;
+			ddram_wr_req  <= ~ddram_wr_req;
+			return_state  <= S_FL_RESP;
 			state         <= S_DD_WR_WAIT;
 		end
 

@@ -1421,10 +1421,28 @@ ddram ddram
 // ddram_base_addr [27:1] = DWORD_addr * 2 = 0x6800000
 // Fed by the SDRAM write snoop: never issues SDRAM reads, so it cannot
 // contend with CPU/PPU fetches. Capture is safe during autosave too.
+//
+// No capture while a savestate operation holds the core: during the pause the
+// scanline/cycle counters come from the free-running clockgen_pause (it keeps
+// video alive), so nes_pre_vblank keeps pulsing, and during a load the mirror
+// is being rewritten byte by byte -- a capture there mixes the old and the new
+// state. Completed save/load operations are reported to the ARM instead (see
+// ra_ss_evt_* below), tagged to the first capture after them.
+// Captures during the OSD pause keep running (the frame counter must advance,
+// or the ARM's stall recovery would reset the runtime) but are flagged with
+// corepaused, so the ARM idles rcheevos instead of evaluating frozen frames.
+reg        ra_ss_evt_save = 1'b0;
+reg        ra_ss_evt_load = 1'b0;
+reg  [1:0] ra_ss_evt_slot = 2'd0;
+
 ra_ram_mirror_nes ra_mirror (
 	.clk             (clk),
 	.reset           (reset_nes),
-	.vblank          (nes_pre_vblank),
+	.vblank          (nes_pre_vblank & ~sleep_savestate),
+	.ss_evt_save     (ra_ss_evt_save),
+	.ss_evt_load     (ra_ss_evt_load),
+	.ss_evt_slot     (ra_ss_evt_slot),
+	.core_paused     (corepaused),
 	.fds_mode        (fds),
 	.clk85           (clk85),
 	.snoop_we        (sdram_snoop_we),
@@ -1489,6 +1507,59 @@ savestate_ui savestate_ui
 	.selected_slot  (ss_slot       )
 );
 defparam savestate_ui.INFO_TIMEOUT_BITS = 25;
+
+// RetroAchievements: report COMPLETED savestate operations to the ARM, which
+// snapshots the rcheevos progress on save and restores it on load (what the
+// reference emulators do by serializing the runtime into the state).
+// Requests are buffered exactly like statemanager.vhd does (save_buffer /
+// load_buffer, save served first, slot taken when the operation is issued),
+// so a request made while another operation runs is attributed to the
+// operation that later serves it. Each operation is bracketed by
+// sleep_savestate and reported when it falls. A load only counts if it
+// reached the restore phase: savestates.vhd aborts the load when the slot
+// header does not match (empty slot) and the state is left untouched.
+// Load gating mirrors .load_state(ss_load & ~hardcore) above.
+reg       ra_ss_pend_save = 1'b0;
+reg       ra_ss_pend_load = 1'b0;
+reg       ra_ss_op_save   = 1'b0;
+reg       ra_ss_op_load   = 1'b0;
+reg [1:0] ra_ss_op_slot   = 2'd0;
+reg       ra_ss_load_seen = 1'b0;
+reg       ra_ss_sleep_d   = 1'b0;
+always @(posedge clk) begin
+	ra_ss_evt_save <= 1'b0;
+	ra_ss_evt_load <= 1'b0;
+	ra_ss_sleep_d  <= sleep_savestate;
+
+	if (ss_save)             ra_ss_pend_save <= 1'b1;
+	if (ss_load & ~hardcore) ra_ss_pend_load <= 1'b1;
+
+	if (sleep_savestate && !ra_ss_sleep_d) begin
+		// operation issued: consume the request it serves
+		ra_ss_op_slot   <= ss_slot;
+		ra_ss_load_seen <= 1'b0;
+		if (ra_ss_pend_save) begin
+			ra_ss_op_save   <= 1'b1;
+			ra_ss_op_load   <= 1'b0;
+			ra_ss_pend_save <= ss_save;
+		end
+		else begin
+			ra_ss_op_save   <= 1'b0;
+			ra_ss_op_load   <= ra_ss_pend_load;
+			ra_ss_pend_load <= ss_load & ~hardcore;
+		end
+	end
+
+	if (sleep_savestate && savestate_load) ra_ss_load_seen <= 1'b1;
+
+	if (ra_ss_sleep_d && !sleep_savestate) begin
+		ra_ss_evt_save <= ra_ss_op_save;
+		ra_ss_evt_load <= ra_ss_op_load & ra_ss_load_seen;
+		ra_ss_evt_slot <= ra_ss_op_slot;
+		ra_ss_op_save  <= 1'b0;
+		ra_ss_op_load  <= 1'b0;
+	end
+end
 
 endmodule
 
